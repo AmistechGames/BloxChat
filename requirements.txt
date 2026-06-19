@@ -1,0 +1,7 @@
+twitchio
+flask
+requests
+pywebview
+keyboard
+pywin32
+python-dotenv

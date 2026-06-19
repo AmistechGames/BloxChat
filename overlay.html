@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Overlay</title>
+
+<style>
+
+body {
+    margin: 0;
+    background: #1e1f22;
+    font-family: Arial;
+    overflow: hidden;
+}
+
+#chat {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    padding: 10px;
+
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.message {
+    background: #2b2d31;
+    color: white;
+    padding: 10px;
+    border-radius: 10px;
+    font-size: 14px;
+}
+
+.username {
+    color: #8ab4ff;
+    font-weight: bold;
+}
+
+.message img {
+    height: 18px;
+    vertical-align: middle;
+}
+
+#alerts {
+    position: absolute;
+    top: 10px;
+    width: 100%;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.alert {
+    background: #ffcc00;
+    color: black;
+    padding: 8px;
+    border-radius: 8px;
+    font-weight: bold;
+    animation: pop 0.2s ease;
+}
+
+@keyframes pop {
+    from { opacity: 0; transform: translateY(-5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="alerts"></div>
+<div id="chat"></div>
+
+<script>
+
+const chat = document.getElementById("chat");
+const alerts = document.getElementById("alerts");
+
+let lastId = 0;
+
+async function updateChat() {
+    const res = await fetch("/messages");
+    const data = await res.json();
+
+    if (!data.length) return;
+
+    const latest = data[data.length - 1];
+
+    if (latest.id === lastId) return;
+
+    lastId = latest.id;
+
+    chat.innerHTML = "";
+
+    data.forEach(m => {
+        const div = document.createElement("div");
+        div.className = "message";
+        div.innerHTML = `<span class="username">${m.user}:</span> ${m.message}`;
+        chat.appendChild(div);
+    });
+}
+
+async function updateAlerts() {
+    const res = await fetch("/alerts");
+    const data = await res.json();
+
+    data.forEach(a => {
+        const div = document.createElement("div");
+        div.className = "alert";
+        div.innerText = a.text;
+
+        alerts.appendChild(div);
+
+        setTimeout(() => div.remove(), 5000);
+    });
+}
+
+setInterval(updateChat, 250);
+setInterval(updateAlerts, 1000);
+
+</script>
+
+</body>
+</html>
