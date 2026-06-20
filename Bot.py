@@ -2,7 +2,7 @@
 # APP VERSION
 # =========================================================
 
-APP_VERSION = "2.0.4"
+APP_VERSION = "2.0.5"
 UPDATE_URL = "https://amistechgames.github.io/BloxChat/version.json"
 
 # =========================================================
@@ -313,8 +313,8 @@ def start_overlay_window():
     overlay_window = webview.create_window(
         "BloxChat Overlay",
         "http://127.0.0.1:5000",
-        width=420,
-        height=650,
+        width=360,
+        height=520,
         frameless=True,
         on_top=True,
         easy_drag=True
