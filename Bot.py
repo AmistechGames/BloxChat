@@ -2,14 +2,8 @@
 # APP VERSION
 # =========================================================
 
-APP_VERSION = "2.0.0"
-
-UPDATE_URL = "https://0wv3zrqf-5000.use2.devtunnels.ms/version.json"
-# version.json format:
-# {
-#   "version": "1.0.1",
-#   "url": "https://your-domain.com/BloxChat.exe"
-# }
+APP_VERSION = "2.0.4"
+UPDATE_URL = "https://amistechgames.github.io/BloxChat/version.json"
 
 # =========================================================
 
@@ -24,13 +18,14 @@ import requests
 import webview
 import keyboard
 import win32com.client
+
 from dotenv import load_dotenv
 from flask import Flask, send_file, jsonify
 from twitchio.ext import commands
-
+from collections import deque
 
 # =========================================================
-# PYINSTALLER SAFE PATH
+# PATH
 # =========================================================
 
 def resource_path(relative_path):
@@ -50,7 +45,16 @@ OAUTH = os.getenv("TWITCH_OAUTH")
 CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 
 CHANNELS = os.getenv("CHANNELS", "")
-CHANNEL_LIST = [c.strip() for c in CHANNELS.split(",") if c.strip()]
+RAW_CHANNEL_LIST = [c.strip().lower() for c in CHANNELS.split(",") if c.strip()]
+
+# =========================================================
+# HARD LIMIT (10 CHANNELS MAX)
+# =========================================================
+
+CHANNEL_LIST = RAW_CHANNEL_LIST[:10]
+
+if len(RAW_CHANNEL_LIST) > 10:
+    print("[WARNING] Max 10 channels allowed. Extra ignored.")
 
 # =========================================================
 # STATE
@@ -58,17 +62,25 @@ CHANNEL_LIST = [c.strip() for c in CHANNELS.split(",") if c.strip()]
 
 class AppState:
     def __init__(self):
-        self.messages = []
+        self.channels = {}
+        self.selected_channel = None
         self.msg_id = 0
 
 STATE = AppState()
 
+for ch in CHANNEL_LIST:
+    STATE.channels[ch] = {
+        "messages": deque(maxlen=50)
+    }
+
+if CHANNEL_LIST:
+    STATE.selected_channel = CHANNEL_LIST[0]
+
 # =========================================================
-# AUTO UPDATE SYSTEM
+# UPDATE SYSTEM
 # =========================================================
 
 def check_for_updates():
-
     try:
         print("[UPDATE] Checking...")
 
@@ -105,7 +117,24 @@ def check_for_updates():
         print("[UPDATE ERROR]", e)
 
 # =========================================================
-# WINDOWS TTS (STABLE SAPI)
+# TTS FIX
+# =========================================================
+
+def fix_screams(text: str) -> str:
+    text = text.strip()
+
+    if not text:
+        return text
+
+    cleaned = text.replace(" ", "")
+
+    if len(cleaned) > 2 and len(set(cleaned)) == 1:
+        return " ".join(list(cleaned)) + "!!!"
+
+    return text
+
+# =========================================================
+# TTS ENGINE
 # =========================================================
 
 class TTSManager:
@@ -113,11 +142,12 @@ class TTSManager:
 
         self.voice = win32com.client.Dispatch("SAPI.SpVoice")
 
-        self.queue = []
+        self.queue = deque(maxlen=100)
         self.lock = threading.Lock()
-        self.running = True
 
         self.voice.Rate = 1
+
+        self.running = True
 
         threading.Thread(target=self.loop, daemon=True).start()
 
@@ -128,21 +158,18 @@ class TTSManager:
         if not text:
             return
 
-        if len(self.queue) > 100:
-            self.queue.pop(0)
-
+        text = fix_screams(text)
         self.queue.append(text)
 
     def loop(self):
 
         while self.running:
-
             try:
                 if not self.queue:
                     time.sleep(0.02)
                     continue
 
-                text = self.queue.pop(0)
+                text = self.queue.popleft()
 
                 with self.lock:
                     self.voice.Speak(text)
@@ -150,7 +177,6 @@ class TTSManager:
             except Exception as e:
                 print("[TTS ERROR]", e)
                 time.sleep(0.2)
-
 
 tts = TTSManager()
 
@@ -169,7 +195,7 @@ class StreamBot(commands.Bot):
 
         self.chat_channels = set()
 
-        print("[BOT] Running and Active...")
+        print("[BOT] Running...")
 
     async def event_ready(self):
         print(f"[READY] Logged in as {self.nick}")
@@ -179,19 +205,21 @@ class StreamBot(commands.Bot):
         if message.echo:
             return
 
+        channel = message.channel.name.lower()
+
+        if channel not in STATE.channels:
+            STATE.channels[channel] = {"messages": deque(maxlen=50)}
+
         STATE.msg_id += 1
 
-        STATE.messages.append({
+        STATE.channels[channel]["messages"].append({
             "id": STATE.msg_id,
             "user": message.author.name,
             "message": message.content,
-            "channel": message.channel.name
+            "channel": channel
         })
 
-        if len(STATE.messages) > 50:
-            STATE.messages.pop(0)
-
-        print(f"[{message.channel.name}] {message.author.name}: {message.content}")
+        print(f"[{channel}] {message.author.name}: {message.content}")
 
         await self.handle_commands(message)
 
@@ -199,7 +227,7 @@ class StreamBot(commands.Bot):
         self.chat_channels.add(channel)
 
     # =====================================================
-    # TTS COMMAND
+    # TTS COMMAND (ONLY SELECTED CHANNEL)
     # =====================================================
 
     @commands.command(name="tts")
@@ -207,7 +235,10 @@ class StreamBot(commands.Bot):
 
         text = ctx.message.content.replace("!tts", "").strip()
 
-        if text:
+        if not text:
+            return
+
+        if ctx.channel.name.lower() == STATE.selected_channel:
             tts.speak(f"{ctx.author.name} says {text}")
 
 # =========================================================
@@ -223,11 +254,38 @@ def overlay():
 
 @app.route("/messages")
 def messages():
-    return jsonify(STATE.messages[-25:])
+
+    ch = STATE.selected_channel
+
+    if not ch:
+        return jsonify([])
+
+    return jsonify(list(STATE.channels[ch]["messages"]))
+
+@app.route("/channels")
+def channels():
+    return jsonify(list(STATE.channels.keys()))
+
+@app.route("/select/<channel>")
+def select_channel(channel):
+
+    channel = channel.lower()
+
+    if channel in STATE.channels:
+        STATE.selected_channel = channel
+        print("[CHANNEL] Switched to:", channel)
+        return "ok"
+
+    return "invalid", 404
 
 @app.route("/clear")
 def clear():
-    STATE.messages.clear()
+
+    ch = STATE.selected_channel
+
+    if ch:
+        STATE.channels[ch]["messages"].clear()
+
     STATE.msg_id = 0
     return "ok"
 
@@ -272,28 +330,22 @@ def toggle_overlay():
 
     global overlay_visible
 
-    try:
-        if not overlay_window:
-            return
+    if not overlay_window:
+        return
 
-        overlay_visible = not overlay_visible
+    overlay_visible = not overlay_visible
 
-        if overlay_visible:
-            overlay_window.show()
-        else:
-            overlay_window.hide()
-
-    except Exception as e:
-        print("[TOGGLE ERROR]", e)
+    if overlay_visible:
+        overlay_window.show()
+    else:
+        overlay_window.hide()
 
 # =========================================================
 # HOTKEYS
 # =========================================================
 
 def hotkeys():
-
     keyboard.add_hotkey("ctrl+shift+o", toggle_overlay)
-
     keyboard.wait()
 
 # =========================================================
@@ -310,7 +362,13 @@ def console_loop(bot):
         if not msg.strip():
             continue
 
+        selected = STATE.selected_channel
+
         for ch in list(bot.chat_channels):
+
+            if ch.name.lower() != selected:
+                continue
+
             try:
                 asyncio.run_coroutine_threadsafe(
                     ch.send(msg),
@@ -319,7 +377,7 @@ def console_loop(bot):
             except:
                 pass
 
-        print(f"[BOT -> CHAT] {msg}")
+        print(f"[BOT -> {selected}] {msg}")
 
 # =========================================================
 # START

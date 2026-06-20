@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Overlay</title>
+<title>BloxChat Overlay</title>
 
 <style>
 
@@ -13,6 +13,24 @@ body {
     overflow: hidden;
 }
 
+/* CHANNEL SELECTOR */
+#channelSelect {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+
+    background: #2b2d31;
+    color: white;
+
+    border: none;
+    border-radius: 8px;
+
+    padding: 8px;
+
+    z-index: 999;
+}
+
+/* CHAT */
 #chat {
     position: absolute;
     bottom: 0;
@@ -30,6 +48,8 @@ body {
     padding: 10px;
     border-radius: 10px;
     font-size: 14px;
+
+    word-wrap: break-word;
 }
 
 .username {
@@ -37,33 +57,20 @@ body {
     font-weight: bold;
 }
 
+/* Twitch emotes (basic support) */
 .message img {
-    height: 18px;
+    height: 20px;
     vertical-align: middle;
 }
 
-#alerts {
-    position: absolute;
-    top: 10px;
-    width: 100%;
-    padding: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.alert {
-    background: #ffcc00;
-    color: black;
-    padding: 8px;
-    border-radius: 8px;
-    font-weight: bold;
-    animation: pop 0.2s ease;
-}
-
+/* small fade for new messages */
 @keyframes pop {
-    from { opacity: 0; transform: translateY(-5px); }
+    from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+.message {
+    animation: pop 0.15s ease;
 }
 
 </style>
@@ -71,55 +78,112 @@ body {
 
 <body>
 
-<div id="alerts"></div>
+<select id="channelSelect"></select>
+
 <div id="chat"></div>
 
 <script>
 
 const chat = document.getElementById("chat");
-const alerts = document.getElementById("alerts");
+const select = document.getElementById("channelSelect");
 
-let lastId = 0;
+let lastMessages = [];
 
-async function updateChat() {
-    const res = await fetch("/messages");
-    const data = await res.json();
+// =====================================================
+// LOAD CHANNELS
+// =====================================================
 
-    if (!data.length) return;
+async function loadChannels() {
+    try {
+        const res = await fetch("/channels");
+        const channels = await res.json();
 
-    const latest = data[data.length - 1];
+        select.innerHTML = "";
 
-    if (latest.id === lastId) return;
+        channels.forEach(ch => {
+            const option = document.createElement("option");
+            option.value = ch;
+            option.textContent = ch;
+            select.appendChild(option);
+        });
 
-    lastId = latest.id;
+    } catch (e) {
+        console.log("Channel load error", e);
+    }
+}
+
+// =====================================================
+// SWITCH CHANNEL
+// =====================================================
+
+select.addEventListener("change", async (e) => {
+
+    await fetch("/select/" + e.target.value);
 
     chat.innerHTML = "";
+    lastMessages = [];
 
-    data.forEach(m => {
-        const div = document.createElement("div");
-        div.className = "message";
-        div.innerHTML = `<span class="username">${m.user}:</span> ${m.message}`;
-        chat.appendChild(div);
-    });
+});
+
+// =====================================================
+// SIMPLE EMOTE SUPPORT (SAFE)
+// =====================================================
+
+function parseEmotes(text) {
+    return text.replace(
+        /(https:\/\/static-cdn\.jtvnw\.net\/emoticons\/v2\/\d+\/default\/dark\/1\.0)/g,
+        '<img src="$1">'
+    );
 }
 
-async function updateAlerts() {
-    const res = await fetch("/alerts");
-    const data = await res.json();
+// =====================================================
+// UPDATE CHAT
+// =====================================================
 
-    data.forEach(a => {
-        const div = document.createElement("div");
-        div.className = "alert";
-        div.innerText = a.text;
+async function updateChat() {
 
-        alerts.appendChild(div);
+    try {
 
-        setTimeout(() => div.remove(), 5000);
-    });
+        const res = await fetch("/messages");
+        const messages = await res.json();
+
+        if (!messages || messages.length === 0) return;
+
+        const last = messages[messages.length - 1];
+
+        if (lastMessages.length > 0 && last.id === lastMessages[lastMessages.length - 1].id) {
+            return;
+        }
+
+        lastMessages = messages;
+
+        chat.innerHTML = "";
+
+        messages.forEach(m => {
+
+            const div = document.createElement("div");
+            div.className = "message";
+
+            const msg = parseEmotes(m.message);
+
+            div.innerHTML =
+                `<span class="username">${m.user}:</span> ${msg}`;
+
+            chat.appendChild(div);
+        });
+
+    } catch (err) {
+        console.log("Overlay error", err);
+    }
 }
 
-setInterval(updateChat, 250);
-setInterval(updateAlerts, 1000);
+// =====================================================
+// INIT
+// =====================================================
+
+loadChannels();
+
+setInterval(updateChat, 300);
 
 </script>
 
